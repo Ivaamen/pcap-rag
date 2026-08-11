@@ -9,7 +9,8 @@ Implements stages 2 and 4 of security_log_rag_project.md:
   have Groq (llama-3.3-70B) answer grounded ONLY in that retrieved context.
 
 Usage (from the repo root, inside the pcap-rag-venv):
-    python3 RAG_pipeline.py [path/to/connections_summary_*.txt]  # ingest
+    python3 RAG_pipeline.py [path/to/connections_summary_*.txt]  # ingest (sync)
+    python3 RAG_pipeline.py --accumulate [path/to/summary.txt]   # ingest (keep old)
     python3 RAG_pipeline.py ask "question" [--top-k N]           # one-shot RAG answer
     python3 RAG_pipeline.py ask --interactive                    # chat loop
 
@@ -144,8 +145,22 @@ def parse_fields(lines):
 
 
 def cmd_ingest(args):
-    """Ingest a connections summary into Chroma (the historical default)."""
-    summary_path = args[0] if args else find_summary_file()
+    """Ingest a connections summary into Chroma (the historical default).
+
+    By default the collection is synced to the given file — connections no
+    longer present are dropped. With --accumulate, previously-ingested
+    connections are kept, so multiple captures build up a single retrievable
+    corpus for `ask`.
+    """
+    parser = argparse.ArgumentParser(prog="RAG_pipeline.py")
+    parser.add_argument("summary", nargs="?",
+                        help="Path to a connections summary file (default: auto-pick).")
+    parser.add_argument("--accumulate", action="store_true",
+                        help="Keep previously-ingested connections instead of syncing "
+                             "the collection to this file (multi-capture corpus).")
+    ns = parser.parse_args(args)
+
+    summary_path = ns.summary or find_summary_file()
     if not os.path.exists(summary_path):
         sys.exit(f"Summary file not found: {summary_path}")
 
@@ -153,7 +168,8 @@ def cmd_ingest(args):
     if not connections:
         sys.exit(f"No connections parsed from {summary_path}")
 
-    print(f"Ingesting {len(connections)} connections from {summary_path}")
+    mode = "  (accumulate)" if ns.accumulate else ""
+    print(f"Ingesting {len(connections)} connections from {summary_path}{mode}")
     for conn in connections:
         print(f"  {conn['id']}")
 
@@ -167,6 +183,19 @@ def cmd_ingest(args):
         name=COLLECTION_NAME,
         embedding_function=DefaultEmbeddingFunction(),
     )
+
+    # Unless accumulating, sync the collection to THIS file: drop any
+    # previously-ingested connections whose stream_id is no longer in the
+    # summary. upsert alone only adds/updates matching ids, so stale docs
+    # from earlier ingests of other captures would otherwise accumulate in
+    # the store (and pollute retrieval).
+    if not ns.accumulate:
+        parsed_ids = {conn["id"] for conn in connections}
+        existing_ids = set(collection.get(include=[])["ids"])
+        stale = existing_ids - parsed_ids
+        if stale:
+            collection.delete(ids=sorted(stale))
+            print(f"  removed {len(stale)} stale connection(s) from a previous ingest")
 
     # upsert (not add) so re-running the script updates in place instead of
     # failing on duplicate stream_id keys.

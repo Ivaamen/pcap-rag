@@ -20,7 +20,7 @@ Then run
 ```python
 python3 RAG_pipeline.py
 ```
-In order to embed every connection into the chroma vector database using miniLM-L6-V2, ready for retrieval. With no argument it auto-picks the most recent connections summary; pass a specific one as an argument if you prefer.
+In order to embed every connection into the chroma vector database using miniLM-L6-V2, ready for retrieval. With no argument it auto-picks the most recent connections summary; pass a specific one as an argument if you prefer. By default the store mirrors the summary you ingest — pass `--accumulate` to keep previously-ingested captures and build up a multi-capture corpus for `ask`.
 Finally, ask questions about the capture. The top-k most relevant connections are retrieved from the vector database and the answer is generated grounded only in them:
 ```python
 python3 RAG_pipeline.py ask "What SSH connections were captured?"
